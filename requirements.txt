@@ -1,3 +1,34 @@
+# # Core logic dependencies
+# langchain-google-genai
+# python-dotenv
+# PyPDF2
+# langchain
+# requests
+# faiss-cpu
+
+# # FastAPI server dependencies
+# fastapi
+# uvicorn[standard]
+# pydantic
+
+
+
+# langchain-google-genai
+# python-dotenv
+# PyPDF2 # Kept for compatibility, but PyMuPDF is now used for parsing
+# PyMuPDF # ADDED: Superior PDF text extraction
+# langchain
+# requests
+# faiss-cpu
+# langchain-cohere # ADDED: For the re-ranking step
+
+# # FastAPI server dependencies
+# fastapi
+# uvicorn[standard]
+# pydantic
+
+
+
 # requirements.txt
 
 # --- Core Logic & AI Dependencies ---
@@ -8,10 +39,7 @@ langchain-google-genai
 # For the core LangChain framework functionality
 langchain
 
-# For creating the local vector store
-faiss-cpu
-
-# For robust and accurate PDF text extraction (replaces PyPDF2)
+# For robust and accurate PDF text extraction
 PyMuPDF
 
 # For downloading the PDF from the URL
@@ -19,6 +47,12 @@ requests
 
 # For managing API keys from the .env file
 python-dotenv
+
+# The official Pinecone client library
+pinecone-client
+
+# The LangChain integration for Pinecone
+langchain-pinecone
 
 
 # --- FastAPI Server Dependencies ---
