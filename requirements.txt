@@ -1,13 +1,33 @@
-# Core logic dependencies
+# requirements.txt
+
+# --- Core Logic & AI Dependencies ---
+
+# For interacting with Google's Gemini models and embeddings
 langchain-google-genai
-python-dotenv
-PyPDF2
+
+# For the core LangChain framework functionality
 langchain
-requests
-sentence-transformers
+
+# For creating the local vector store
 faiss-cpu
 
-# FastAPI server dependencies
+# For robust and accurate PDF text extraction (replaces PyPDF2)
+PyMuPDF
+
+# For downloading the PDF from the URL
+requests
+
+# For managing API keys from the .env file
+python-dotenv
+
+
+# --- FastAPI Server Dependencies ---
+
+# The web framework
 fastapi
+
+# The server that runs the FastAPI application
 uvicorn[standard]
+
+# Data validation library used by FastAPI
 pydantic
