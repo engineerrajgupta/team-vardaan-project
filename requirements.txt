@@ -1,11 +1,11 @@
-
 # Core logic dependencies
 langchain-google-genai
 python-dotenv
 PyPDF2
 langchain
 requests
-numpy
+sentence-transformers
+faiss-cpu
 
 # FastAPI server dependencies
 fastapi
