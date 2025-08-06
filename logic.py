@@ -4,9 +4,8 @@ import requests
 import io
 from dotenv import load_dotenv
 from PyPDF2 import PdfReader
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_text_splitters.character import CharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain.docstore.document import Document
 
@@ -14,8 +13,11 @@ from langchain.docstore.document import Document
 load_dotenv()
 api_key = os.getenv("GEMINI_API_KEY")
 
-# --- Initialize LLM ---
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=api_key, temperature=0)
+# --- Initialize LLM and Embeddings ---
+# We now use the Gemini API for both text generation and embeddings
+llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=api_key, temperature=0)
+embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=api_key)
+
 
 # --- Core Logic Functions ---
 
@@ -34,7 +36,6 @@ def get_documents_from_pdf_url(pdf_url):
         for i, page in enumerate(reader.pages):
             page_text = page.extract_text()
             if page_text:
-                # The 'source' metadata will help us track the page number
                 documents.append(Document(page_content=page_text, metadata={"source_page": i + 1}))
         print(f"PDF processed successfully. Found {len(documents)} pages with text.")
         return documents
@@ -53,14 +54,14 @@ def get_text_chunks(documents):
     return text_splitter.split_documents(documents)
 
 def get_vector_store(text_chunks):
-    """Creates a FAISS vector store from document chunks."""
+    """Creates a FAISS vector store from document chunks using Gemini embeddings."""
     if not text_chunks:
         print("Error: No text chunks to process.")
         return None
     try:
-        print("Creating vector store...")
-        embedding = HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2')
-        vector_store = FAISS.from_documents(documents=text_chunks, embedding=embedding)
+        print("Creating vector store with Gemini Embeddings...")
+        # We pass the Gemini embedding model here instead of HuggingFace
+        vector_store = FAISS.from_documents(documents=text_chunks, embedding=embeddings)
         print("Vector store created successfully.")
         return vector_store
     except Exception as e:
@@ -88,18 +89,19 @@ def llm_parser_extract_query_topic(user_question):
 
 def generate_structured_answer(context_with_sources, question):
     """
-    Generates a structured JSON answer. It uses the context if available, or its
-    own intelligence if the context is empty, clearly stating the situation.
+    Generates a structured JSON answer including the answer, source quote, and page number.
+    This is used for logging to prove the system's capabilities.
     """
     prompt = f"""
     You are a highly intelligent logic engine for analyzing legal and insurance documents.
-    Your task is to answer the user's question based on the provided context.
+    Your task is to answer the user's question based STRICTLY on the provided context.
+    The context is a JSON object where keys are page numbers and values are the text from those pages.
+    You must generate a structured JSON response.
 
     **Provided Context from Document:**
     ---
     {context_with_sources}
     ---
-    (Note: The context above may be empty if no relevant text was found in the document.)
 
     **User's Question:**
     ---
@@ -107,25 +109,22 @@ def generate_structured_answer(context_with_sources, question):
     ---
 
     **Your Task:**
-    1.  Answer the question using the provided context.
-    2.  If the context is insufficient, use your general knowledge of insurance policies to provide the most likely answer.
-    3.  Generate a JSON object with the following schema:
+    1. Find the single most relevant page and quote that answers the question.
+    2. Generate a JSON object with the following schema:
     {{
       "question": "{question}",
-      "answer": "A concise, direct answer to the question. Do not mention the provided context or document in your answer.",
-      "source_quote": "The single, most relevant sentence from the context that directly supports your answer. If no direct quote is available, put 'N/A'.",
-      "source_page_number": "The page number (as an integer) where the source_quote was found. If not applicable, put 'N/A'."
+      "answer": "A concise, direct answer to the question.",
+      "source_quote": "The single, most relevant sentence from the context that directly supports your answer.",
+      "source_page_number": "The page number (as an integer) where the source_quote was found."
     }}
 
-    Example of a good inferential answer when context is empty:
+    If the information is not in the context, respond with this JSON structure:
     {{
-        "question": "What is the policy on alien abductions?",
-        "answer": "Standard insurance policies typically do not cover events like alien abductions unless explicitly stated in a special addendum.",
-        "source_quote": "N/A",
-        "source_page_number": "N/A"
+      "question": "{question}",
+      "answer": "Information not found in the provided document context.",
+      "source_quote": "N/A",
+      "source_page_number": "N/A"
     }}
-
-    Now, generate the JSON response.
     """
     try:
         response = llm.invoke(prompt)
@@ -142,8 +141,8 @@ def generate_structured_answer(context_with_sources, question):
 
 def process_document_and_questions(pdf_url, questions):
     """
-    Main processing pipeline. It now always calls the generation step to provide
-    more intelligent answers, even if the initial search finds no direct context.
+    Main processing pipeline. It now returns a simple list of answers to match
+    the online judge's expected output format, while logging the detailed analysis.
     """
     documents = get_documents_from_pdf_url(pdf_url)
     if not documents:
@@ -172,13 +171,18 @@ def process_document_and_questions(pdf_url, questions):
         
         context_json_str = json.dumps(context_with_sources, indent=2)
 
-        # Always generate an answer, even if context is empty.
-        # The intelligence is now in the prompt of the generation function.
-        structured_answer = generate_structured_answer(context_json_str, question)
-        print(json.dumps(structured_answer, indent=2))
-        
-        # Extract only the simple answer for the final response
-        final_simple_answers.append(structured_answer.get("answer", "Error processing this question."))
+        if retrieved_docs:
+            # Generate the detailed answer for logging purposes
+            structured_answer = generate_structured_answer(context_json_str, question)
+            print(json.dumps(structured_answer, indent=2))
+            
+            # Extract only the simple answer for the final response
+            final_simple_answers.append(structured_answer.get("answer", "Error processing this question."))
+        else:
+            # Handle cases where no context is found
+            error_answer = "Could not find any relevant context for this question in the document."
+            print(f"  -> {error_answer}")
+            final_simple_answers.append(error_answer)
 
     # This is the final object that will be sent to the judge
     final_response = {"answers": final_simple_answers}
