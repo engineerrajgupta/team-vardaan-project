@@ -1,14 +1,13 @@
+
 # Core logic dependencies
 langchain-google-genai
 python-dotenv
 PyPDF2
 langchain
-faiss-cpu
 requests
+numpy
 
 # FastAPI server dependencies
 fastapi
 uvicorn[standard]
 pydantic
-
-# Removed sentence-transformers as we now use Gemini for embeddings
