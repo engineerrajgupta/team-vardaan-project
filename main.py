@@ -1,17 +1,19 @@
+# main.py
+
 import uvicorn
 from fastapi import FastAPI, Request, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Any
 from fastapi.middleware.cors import CORSMiddleware
 
-# Import the core processing logic from your other file
-from logic import process_document_and_questions
+# Import the new async processing logic
+from Blogic import process_document_and_questions_async
 
 # --- FastAPI App Initialization ---
 app = FastAPI(
     title="Intelligent Query-Retrieval API",
     description="An API that meets all evaluation criteria for the HackRx challenge.",
-    version="3.0.0"
+    version="4.0.0"
 )
 
 # --- CORS (Cross-Origin Resource Sharing) Middleware ---
@@ -30,31 +32,27 @@ class QueryRequest(BaseModel):
 
 
 # --- API Endpoint ---
-# We remove the strict response_model to allow for the simple dictionary output
 @app.post("/hackrx/run")
 async def run_submission(request_data: QueryRequest) -> Dict[str, Any]:
     """
     This endpoint accepts a PDF document URL and a list of questions.
-    It processes them and returns a simple JSON response with a list of answers
-    to match the hackathon's sample response format.
+    It processes them asynchronously and returns a simple JSON response.
     """
     print("Received request for /hackrx/run")
     try:
-        # The main logic is now cleanly separated in another file.
-        results = process_document_and_questions(
+        # Call the new asynchronous function
+        results = await process_document_and_questions_async(
             pdf_url=request_data.documents, 
             questions=request_data.questions
         )
         
         if "error" in results:
-            # If the logic file returns an error, pass it to the client
             raise HTTPException(status_code=400, detail=results["error"])
             
         print("Successfully processed request. Returning simple results.")
         return results
 
     except Exception as e:
-        # Catch any other unexpected errors
         print(f"An unexpected error occurred: {e}")
         raise HTTPException(status_code=500, detail=f"An internal server error occurred: {e}")
 
