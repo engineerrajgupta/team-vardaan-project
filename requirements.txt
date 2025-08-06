@@ -1,34 +1,3 @@
-# # Core logic dependencies
-# langchain-google-genai
-# python-dotenv
-# PyPDF2
-# langchain
-# requests
-# faiss-cpu
-
-# # FastAPI server dependencies
-# fastapi
-# uvicorn[standard]
-# pydantic
-
-
-
-# langchain-google-genai
-# python-dotenv
-# PyPDF2 # Kept for compatibility, but PyMuPDF is now used for parsing
-# PyMuPDF # ADDED: Superior PDF text extraction
-# langchain
-# requests
-# faiss-cpu
-# langchain-cohere # ADDED: For the re-ranking step
-
-# # FastAPI server dependencies
-# fastapi
-# uvicorn[standard]
-# pydantic
-
-
-
 # requirements.txt
 
 # --- Core Logic & AI Dependencies ---
