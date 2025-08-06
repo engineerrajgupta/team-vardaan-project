@@ -1,0 +1,11 @@
+langchain>=0.1.14
+langchain-community>=0.0.30
+python-dotenv>=1.0.0
+google-generativeai>=0.3.2
+huggingface_hub>=0.23.0
+
+
+# FastAPI server dependencies
+fastapi
+uvicorn[standard]
+pydantic
