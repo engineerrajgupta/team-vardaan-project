@@ -6,16 +6,15 @@ from dotenv import load_dotenv
 from PyPDF2 import PdfReader
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_text_splitters.character import CharacterTextSplitter
-from langchain_community.vectorstores import FAISS
 from langchain.docstore.document import Document
+import numpy as np
 
 # --- Load Environment Variables ---
 load_dotenv()
 api_key = os.getenv("GEMINI_API_KEY")
 
 # --- Initialize LLM and Embeddings ---
-# We now use the Gemini API for both text generation and embeddings
-llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=api_key, temperature=0)
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=api_key, temperature=0)
 embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=api_key)
 
 
@@ -52,21 +51,6 @@ def get_text_chunks(documents):
         length_function=len
     )
     return text_splitter.split_documents(documents)
-
-def get_vector_store(text_chunks):
-    """Creates a FAISS vector store from document chunks using Gemini embeddings."""
-    if not text_chunks:
-        print("Error: No text chunks to process.")
-        return None
-    try:
-        print("Creating vector store with Gemini Embeddings...")
-        # We pass the Gemini embedding model here instead of HuggingFace
-        vector_store = FAISS.from_documents(documents=text_chunks, embedding=embeddings)
-        print("Vector store created successfully.")
-        return vector_store
-    except Exception as e:
-        print(f"Error creating vector store: {e}")
-        return None
 
 def llm_parser_extract_query_topic(user_question):
     """Uses the LLM to parse the user's question and extract the core topic."""
@@ -149,18 +133,31 @@ def process_document_and_questions(pdf_url, questions):
         return {"error": "Failed to retrieve or read the PDF document."}
 
     text_chunks = get_text_chunks(documents)
-    vector_store = get_vector_store(text_chunks)
-    if not vector_store:
-        return {"error": "Failed to create the vector store."}
+    if not text_chunks:
+        return {"error": "Failed to chunk the document text."}
+
+    # Create embeddings for all text chunks
+    chunk_texts = [chunk.page_content for chunk in text_chunks]
+    chunk_embeddings = embeddings.embed_documents(chunk_texts)
 
     final_simple_answers = []
-    retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 5})
 
     print("\n--- DETAILED ANALYSIS LOG (FOR HUMAN REVIEW) ---")
     for i, question in enumerate(questions):
         print(f"\nProcessing question {i+1}/{len(questions)}: '{question}'")
-        query_topic = llm_parser_extract_query_topic(question)
-        retrieved_docs = retriever.get_relevant_documents(query_topic)
+        
+        # Embed the current question
+        query_embedding = embeddings.embed_query(question)
+
+        # --- Manual Similarity Search using NumPy ---
+        # Calculate cosine similarity between the question embedding and all chunk embeddings
+        similarities = [np.dot(query_embedding, chunk_emb) / (np.linalg.norm(query_embedding) * np.linalg.norm(chunk_emb)) for chunk_emb in chunk_embeddings]
+        
+        # Get the indices of the top 5 most similar chunks
+        top_k = 5
+        top_indices = np.argsort(similarities)[-top_k:][::-1]
+        
+        retrieved_docs = [text_chunks[i] for i in top_indices]
         
         context_with_sources = {}
         for doc in retrieved_docs:
