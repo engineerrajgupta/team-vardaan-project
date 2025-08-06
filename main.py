@@ -2,6 +2,7 @@ import uvicorn
 from fastapi import FastAPI, Request, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Any
+from fastapi.middleware.cors import CORSMiddleware
 
 # Import the core processing logic from your other file
 from logic import process_document_and_questions
@@ -10,7 +11,16 @@ from logic import process_document_and_questions
 app = FastAPI(
     title="Intelligent Query-Retrieval API",
     description="An API that meets all evaluation criteria for the HackRx challenge.",
-    version="2.0.0"
+    version="3.0.0"
+)
+
+# --- CORS (Cross-Origin Resource Sharing) Middleware ---
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # --- Pydantic Models for Request Body Validation ---
