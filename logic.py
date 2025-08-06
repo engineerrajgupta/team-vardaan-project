@@ -9,7 +9,7 @@ from langchain_text_splitters.character import CharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain.docstore.document import Document
-
+#let's do thiss
 # --- Load Environment Variables ---
 load_dotenv()
 api_key = os.getenv("GEMINI_API_KEY")
