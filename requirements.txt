@@ -27,7 +27,7 @@ python-dotenv
 fastapi
 
 # The server that runs the FastAPI application
-uvicorn[standard]
+uvicorn
 
 # Data validation library used by FastAPI
 pydantic
