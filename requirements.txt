@@ -1,22 +1,14 @@
-# requirements.txt (FINAL)
+# requirements.txt (Final Version)
 
-# --- Core Logic & AI Dependencies ---
-langchain
+# --- Core Logic Dependencies ---
 langchain-google-genai
 python-dotenv
-pinecone-client
-langchain-pinecone
-
-# --- Document Processing & OCR ---
-PyMuPDF
+PyMuPDF             # UPGRADED: Replaced PyPDF2 for better PDF parsing
+langchain
 requests
-Pillow
-pytesseract
-
-# --- Caching ---
-redis                     # ADDED: For persistent caching
+numpy
 
 # --- FastAPI Server Dependencies ---
 fastapi
+uvicorn[standard]
 pydantic
-uvicorn
