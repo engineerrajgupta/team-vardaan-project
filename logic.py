@@ -1,144 +1,134 @@
-# logic.py
-#triggering render deployyy
+# logic.py (FINAL PERSISTENT VERSION)
+
 import os
 import json
 import requests
 import io
 import asyncio
 import fitz  # PyMuPDF
+from PIL import Image
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_pinecone import Pinecone
+import pinecone as pinecone_client
+from langchain_pinecone import PineconeVectorStore
 from langchain.docstore.document import Document
+import redis # ADDED
+
+# --- OCR Configuration ---
+try:
+    import pytesseract
+    OCR_ENABLED = True
+except ImportError:
+    print("Warning: pytesseract not found. OCR capabilities will be disabled.")
+    OCR_ENABLED = False
 
 # --- Load Environment Variables & Configuration ---
 load_dotenv()
 gemini_api_key = os.getenv("GEMINI_API_KEY")
 pinecone_api_key = os.getenv("PINECONE_API_KEY")
-pinecone_env = os.getenv("PINECONE_ENVIRONMENT")
-
-# This MUST match the name of the index you created in the Pinecone dashboard
 PINECONE_INDEX_NAME = "hackathon" 
+REDIS_URL = os.getenv("REDIS_URL") # ADDED
 
 # --- Initialize LLM and Embeddings ---
 llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", google_api_key=gemini_api_key, temperature=0)
 embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004", google_api_key=gemini_api_key)
 
+# --- Initialize Redis Cache Connection ---
+try:
+    redis_client = redis.from_url(REDIS_URL)
+    print("Successfully connected to Redis cache.")
+except Exception as e:
+    print(f"Warning: Could not connect to Redis. Caching will be disabled. Error: {e}")
+    redis_client = None
 
-# --- Core Logic Functions ---
-
+# --- Document Processing Functions (Unchanged) ---
 def get_documents_from_pdf_url(pdf_url):
-    """Downloads and parses the PDF using the robust PyMuPDF library."""
     try:
         print(f"Downloading PDF from: {pdf_url}")
         response = requests.get(pdf_url)
         response.raise_for_status()
-        pdf_doc = fitz.open(stream=response.content, filetype="pdf")
+        pdf_bytes = response.content
+        pdf_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         documents = []
+        total_text_length = 0
         for i, page in enumerate(pdf_doc):
             page_text = page.get_text()
+            total_text_length += len(page_text)
             if page_text:
                 documents.append(Document(page_content=page_text, metadata={"source_page": i + 1}))
+        if OCR_ENABLED and total_text_length < 100 * len(pdf_doc):
+            print("Low text detected. Attempting OCR fallback...")
+            documents = []
+            for i, page in enumerate(pdf_doc):
+                pix = page.get_pixmap(dpi=300)
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                ocr_text = pytesseract.image_to_string(img)
+                if ocr_text:
+                    documents.append(Document(page_content=ocr_text, metadata={"source_page": i + 1, "ocr": True}))
+            print(f"OCR processed {len(documents)} pages.")
         pdf_doc.close()
-        print(f"PDF processed with PyMuPDF. Found {len(documents)} pages with text.")
+        print(f"PDF processed. Found {len(documents)} pages with text.")
         return documents
     except Exception as e:
-        print(f"Error processing PDF with PyMuPDF from URL: {e}")
+        print(f"Error processing PDF from URL: {e}")
         return None
 
 def get_text_chunks(documents):
-    """Splits Document objects into smaller chunks using a recursive splitter."""
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000, chunk_overlap=200, length_function=len, add_start_index=True
-    )
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     return text_splitter.split_documents(documents)
 
-async def get_vector_store_async(text_chunks):
-    """
-    Asynchronously connects to Pinecone and upserts the document chunks.
-    This makes the vector store persistent in the cloud.
-    """
-    if not text_chunks: return None
-    try:
-        print(f"Connecting to Pinecone index '{PINECONE_INDEX_NAME}' and upserting documents...")
-        vector_store = await Pinecone.afrom_documents(
-            documents=text_chunks,
-            embedding=embeddings,
-            index_name=PINECONE_INDEX_NAME
-        )
-        print("Pinecone upsert successful.")
-        return vector_store
-    except Exception as e:
-        print(f"Error connecting to or upserting to Pinecone: {e}")
-        return None
-
-async def rerank_documents_with_llm_async(documents, question):
-    """Re-ranks documents using a single, powerful LLM call."""
-    if not documents: return ""
-    docs_as_string = ""
-    for i, doc in enumerate(documents):
-        docs_as_string += f"--- DOCUMENT {i+1} ---\n{doc.page_content}\n\n"
+# --- Main Processing Pipeline ---
+async def process_single_question_fast(retriever, question):
+    print(f"  -> Processing fast: '{question}'")
+    retrieved_docs = await retriever.ainvoke(question)
+    if not retrieved_docs:
+        return "Information not found in the provided document context."
+    context = "\n\n---\n\n".join([doc.page_content for doc in retrieved_docs])
     prompt = f"""
-    You are a highly intelligent document analysis expert. Your task is to identify the most relevant document excerpts to answer a user's question.
-    Below are several document excerpts, each marked with "--- DOCUMENT [number] ---".
-    **User's Question:** "{question}"
-    **Document Excerpts:** {docs_as_string}
-    **Your Task:**
-    Review all the document excerpts and identify the **top 3 most relevant excerpts** for answering the user's question.
-    Return **ONLY the full, original text** of these top 3 excerpts, separated by the exact delimiter "---_---".
-    Do not add any commentary, explanations, or numbering.
-    """
-    try:
-        response = await llm.ainvoke(prompt)
-        return response.content.strip()
-    except Exception as e:
-        print(f"An error occurred during LLM re-ranking call: {e}")
-        return ""
-
-async def generate_simple_answer_async(context, question):
-    """Generates a final answer from the clean, re-ranked context."""
-    prompt = f"""
-    You are a world-class logic engine. Your task is to answer the user's question based **STRICTLY AND ONLY** on the provided context.
+    You are a logic engine. Answer the user's question based **STRICTLY AND ONLY** on the provided context.
     **Provided Context:** --- {context} ---
     **User's Question:** --- {question} ---
-    **Your Task:**
-    Generate a direct, concise, one-sentence answer.
-    If the context **DOES NOT** contain the answer, respond with the exact phrase: "Information not found in the provided document context."
+    **Your Task:** Generate a direct, concise answer. If the context does not contain the answer, respond with the exact phrase: "Information not found in the provided document context."
     """
-    try:
-        response = await llm.ainvoke(prompt)
-        return response.content.strip()
-    except Exception as e:
-        print(f"An error occurred during LLM generation call: {e}")
-        return "Failed to get a response from the language model."
-
-async def process_single_question_async(retriever, question):
-    """Processes a single question using the efficient two-call LLM strategy."""
-    print(f"Processing question: '{question}'")
-    retrieved_docs = await retriever.aget_relevant_documents(question)
-    if not retrieved_docs:
-        return "Could not find any initial context for this question."
-    print(f"  -> Re-ranking {len(retrieved_docs)} documents...")
-    reranked_context = await rerank_documents_with_llm_async(retrieved_docs, question)
-    if not reranked_context:
-        return "Could not find relevant context after LLM re-ranking."
-    print("  -> Generating final answer from re-ranked context...")
-    answer = await generate_simple_answer_async(reranked_context, question)
-    print(f"  -> Generated Answer: {answer}")
-    return answer
+    response = await llm.ainvoke(prompt)
+    return response.content.strip()
 
 async def process_document_and_questions_async(pdf_url, questions):
-    """Main asynchronous processing pipeline for the entire request."""
-    documents = get_documents_from_pdf_url(pdf_url)
-    if not documents: return {"error": "Failed to retrieve or read the PDF document."}
-    text_chunks = get_text_chunks(documents)
-    vector_store = await get_vector_store_async(text_chunks)
-    if not vector_store: return {"error": "Failed to create the vector store."}
-    base_retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 10})
-    tasks = [process_single_question_async(base_retriever, q) for q in questions]
-    final_simple_answers = await asyncio.gather(*tasks)
-    final_response = {"answers": final_simple_answers}
+    """Main entry point for the API, now with persistent Redis caching."""
+    
+    # --- THE FIX IS HERE: Use Redis for persistent caching ---
+    is_processed = redis_client.exists(pdf_url) if redis_client else False
+    
+    if not is_processed:
+        print(f"--- New URL detected. Starting full ingestion for {pdf_url} ---")
+        documents = get_documents_from_pdf_url(pdf_url)
+        if not documents: return {"error": "Failed to retrieve or read the PDF document."}
+        
+        text_chunks = get_text_chunks(documents)
+        
+        print(f"--- Embedding and upserting {len(text_chunks)} chunks to Pinecone. This may take time... ---")
+        await PineconeVectorStore.afrom_documents(
+            documents=text_chunks, embedding=embeddings, index_name=PINECONE_INDEX_NAME
+        )
+        
+        # Add the URL to the persistent Redis cache with an expiration time (e.g., 24 hours)
+        if redis_client:
+            redis_client.set(pdf_url, "processed", ex=86400)
+        print("--- Full ingestion complete. Subsequent requests for this URL will be fast. ---")
+    else:
+        print(f"--- URL found in Redis cache. Skipping ingestion for {pdf_url} ---")
+
+    pc = pinecone_client.Pinecone(api_key=pinecone_api_key)
+    index = pc.Index(PINECONE_INDEX_NAME)
+    vector_store = PineconeVectorStore(index=index, embedding=embeddings)
+    
+    retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 5})
+
+    tasks = [process_single_question_fast(retriever, q) for q in questions]
+    final_answers = await asyncio.gather(*tasks)
+    
+    final_response = {"answers": final_answers}
     print("\n--- FINAL API RESPONSE (as sent to judge) ---")
     print(json.dumps(final_response, indent=2))
     return final_response
