@@ -1,36 +1,22 @@
-# requirements.txt
+# requirements.txt (FINAL)
 
 # --- Core Logic & AI Dependencies ---
-
-# For interacting with Google's Gemini models and embeddings
-langchain-google-genai
-
-# For the core LangChain framework functionality
 langchain
-
-# For robust and accurate PDF text extraction
-PyMuPDF
-
-# For downloading the PDF from the URL
-requests
-
-# For managing API keys from the .env file
+langchain-google-genai
 python-dotenv
-
-# The official Pinecone client library
 pinecone-client
-
-# The LangChain integration for Pinecone
 langchain-pinecone
 
+# --- Document Processing & OCR ---
+PyMuPDF
+requests
+Pillow
+pytesseract
+
+# --- Caching ---
+redis                     # ADDED: For persistent caching
 
 # --- FastAPI Server Dependencies ---
-
-# The web framework
 fastapi
-
-# The server that runs the FastAPI application
-uvicorn
-
-# Data validation library used by FastAPI
 pydantic
+uvicorn
