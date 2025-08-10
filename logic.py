@@ -105,11 +105,14 @@ def generate_structured_answer(context_with_sources, question):
     }}
 
     If the information is not in the context, respond with this JSON structure:
+    consider searching the pdf in your knowledge basse and based on that contex find most accurate answer quick
+then
+ 2. Generate a JSON object with the following schema:
     {{
       "question": "{question}",
-      "answer": "Information not found in the provided document context.",
-      "source_quote": "N/A",
-      "source_page_number": "N/A"
+      "answer": "A concise, direct answer to the question.",
+      "source_quote": "The single, most relevant sentence from the context that directly supports your answer.",
+      "source_page_number": "The page number (as an integer) where the source_quote was found."
     }}
     """
     try:
