@@ -15,7 +15,7 @@ api_key = os.getenv("GEMINI_API_KEY")
 
 # --- Initialize LLM and Embeddings ---
 llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro-preview-06-05", google_api_key=api_key, temperature=0)
-embeddings = GoogleGenerativeAIEmbeddings(model="gemeni-embedding-001", google_api_key=api_key)
+embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-001", google_api_key=api_key)
 
 
 # --- Core Logic Functions ---
@@ -63,9 +63,7 @@ def llm_parser_extract_query_topic(user_question):
     """
     try:
         response = llm.invoke(prompt)
-        json_string = response.content.strip().replace("
-json", "").replace("
-", "")
+        json_string = response.content.strip().replace("```json", "").replace("```", "")
         parsed_json = json.loads(json_string)
         if isinstance(parsed_json, list) and parsed_json:
             return parsed_json[0].get("query_topic", user_question)
@@ -104,10 +102,9 @@ def generate_structured_answer(context_with_sources, question):
       "source_page_number": "The page number (as an integer) where the source_quote was found."
     }}
 
-    If the information is not in the context, respond with this JSON structure:
-    consider searching the pdf in your knowledge basse and based on that contex find most accurate answer quick
-then
- 2. Generate a JSON object with the following schema:
+    If the information is not in the context, 
+    consider using pdf and your knowledge base so it will be easy to answer then
+    respond with this JSON structure:       
     {{
       "question": "{question}",
       "answer": "A concise, direct answer to the question.",
@@ -117,9 +114,7 @@ then
     """
     try:
         response = llm.invoke(prompt)
-        json_string = response.content.strip().replace("
-json", "").replace("
-", "")
+        json_string = response.content.strip().replace("```json", "").replace("```", "")
         return json.loads(json_string)
     except Exception as e:
         print(f"An error occurred during LLM call: {e}")
