@@ -1,108 +1,137 @@
 import os
 import json
-import numpy as np
-import tempfile
 import requests
-from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_google_genai import GoogleGenerativeAIEmbeddings, GoogleGenerativeAI
+import io
 from dotenv import load_dotenv
 from PyPDF2 import PdfReader
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from langchain_text_splitters.character import CharacterTextSplitter
+from langchain.docstore.document import Document
+import numpy as np
 
+# --- Load Environment Variables ---
 load_dotenv()
+api_key = os.getenv("GEMINI_API_KEY")
 
 # --- Initialize LLM and Embeddings ---
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-if not GOOGLE_API_KEY:
-    raise ValueError("Missing GOOGLE_API_KEY in .env")
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro-preview-06-05", google_api_key=api_key, temperature=0)
+embeddings = GoogleGenerativeAIEmbeddings(model="gemeni-embedding-001", google_api_key=api_key)
 
-embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
-llm = GoogleGenerativeAI(model="gemini-2.5-pro-preview-06-05")
 
-# --- Helper: download PDF from URL and return LangChain Documents ---
+# --- Core Logic Functions ---
+
 def get_documents_from_pdf_url(pdf_url):
+    """
+    Downloads a PDF, extracts text page by page, and creates Document objects
+    that store the text and the original page number in their metadata.
+    """
     try:
-        response = requests.get(pdf_url, timeout=20)
+        print(f"Downloading PDF from: {pdf_url}")
+        response = requests.get(pdf_url)
         response.raise_for_status()
-    except Exception as e:
-        print(f"Error downloading PDF: {e}")
-        return None
-
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-        tmp_file.write(response.content)
-        tmp_path = tmp_file.name
-
-    try:
-        loader = PyPDFLoader(tmp_path)
-        documents = loader.load()
+        pdf_file = io.BytesIO(response.content)
+        reader = PdfReader(pdf_file)
+        documents = []
+        for i, page in enumerate(reader.pages):
+            page_text = page.extract_text()
+            if page_text:
+                documents.append(Document(page_content=page_text, metadata={"source_page": i + 1}))
+        print(f"PDF processed successfully. Found {len(documents)} pages with text.")
         return documents
     except Exception as e:
-        print(f"Error reading PDF: {e}")
+        print(f"Error processing PDF from URL: {e}")
         return None
 
-# --- Helper: chunk text ---
 def get_text_chunks(documents):
-    try:
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1500,
-            chunk_overlap=200
-        )
-        chunks = text_splitter.split_documents(documents)
-        return chunks
-    except Exception as e:
-        print(f"Error splitting text: {e}")
-        return None
+    """Splits Document objects into smaller chunks for processing."""
+    text_splitter = CharacterTextSplitter(
+        separator="\n",
+        chunk_size=1200,
+        chunk_overlap=200,
+        length_function=len
+    )
+    return text_splitter.split_documents(documents)
 
-# --- Helper: structured answer from context ---
-def generate_structured_answer(context_json_str, question):
+def llm_parser_extract_query_topic(user_question):
+    """Uses the LLM to parse the user's question and extract the core topic."""
     prompt = f"""
-You are an expert assistant. A user asked a question about a document.
-
-Context (with source pages in JSON):
-{context_json_str}
-
-Question: {question}
-
-Instructions:
-- Base your answer ONLY on the given context.
-- Provide the answer in JSON format: {{ "answer": "<string>", "sources": ["page_numbers"] }}
-- If the answer cannot be found, respond with: {{ "answer": "Not found in document", "sources": [] }}
-"""
+    You are an expert at identifying the core subject of a question.
+    Analyze the following user question and extract its main topic for semantic search.
+    User question: "{user_question}"
+    Return a JSON object with a single key "query_topic".
+    Respond ONLY with the JSON object.
+    """
     try:
         response = llm.invoke(prompt)
-        parsed = json.loads(response.content)
-        return parsed
-    except Exception as e:
-        return {"answer": f"Error generating structured answer: {e}", "sources": []}
+        json_string = response.content.strip().replace("
+json", "").replace("
+", "")
+        parsed_json = json.loads(json_string)
+        if isinstance(parsed_json, list) and parsed_json:
+            return parsed_json[0].get("query_topic", user_question)
+        return parsed_json.get("query_topic", user_question)
+    except Exception:
+        return user_question
 
-# --- Main pipeline ---
+def generate_structured_answer(context_with_sources, question):
+    """
+    Generates a structured JSON answer including the answer, source quote, and page number.
+    This is used for logging to prove the system's capabilities.
+    """
+    prompt = f"""
+    You are a highly intelligent logic engine for analyzing legal and insurance documents.
+    Your task is to answer the user's question based STRICTLY on the provided context.
+    The context is a JSON object where keys are page numbers and values are the text from those pages.
+    You must generate a structured JSON response.
+
+    **Provided Context from Document:**
+    ---
+    {context_with_sources}
+    ---
+
+    **User's Question:**
+    ---
+    {question}
+    ---
+
+    **Your Task:**
+    1. Find the single most relevant page and quote that answers the question.
+    2. Generate a JSON object with the following schema:
+    {{
+      "question": "{question}",
+      "answer": "A concise, direct answer to the question.",
+      "source_quote": "The single, most relevant sentence from the context that directly supports your answer.",
+      "source_page_number": "The page number (as an integer) where the source_quote was found."
+    }}
+
+    If the information is not in the context, respond with this JSON structure:
+    {{
+      "question": "{question}",
+      "answer": "Information not found in the provided document context.",
+      "source_quote": "N/A",
+      "source_page_number": "N/A"
+    }}
+    """
+    try:
+        response = llm.invoke(prompt)
+        json_string = response.content.strip().replace("
+json", "").replace("
+", "")
+        return json.loads(json_string)
+    except Exception as e:
+        print(f"An error occurred during LLM call: {e}")
+        return {
+            "question": question,
+            "answer": "Failed to get a response from the language model.",
+            "source_quote": f"API Error: {e}",
+            "source_page_number": "N/A"
+        }
+
 def process_document_and_questions(pdf_url, questions):
     """
-    Main processing pipeline with special-case handling for the Principia Newton PDF.
+    Main processing pipeline. It now returns a simple list of answers to match
+    the online judge's expected output format, while logging the detailed analysis.
     """
-
-    # SPECIAL CASE: Principia Newton PDF → skip extraction and feed book name directly to LLM
-    if "principia_newton.pdf" in pdf_url.lower():
-        print("Special case detected: Principia Newton PDF → skipping text extraction")
-        final_simple_answers = []
-        for q in questions:
-            prompt = f"""
-You are an expert historian and physicist.
-The user is asking a question about the book 'Philosophiæ Naturalis Principia Mathematica' by Isaac Newton.
-Question: {q}
-Provide a clear, accurate, concise answer based solely on your knowledge of the book.
-If the information is not known from historical records, say 'Information not available from historical record.'
-"""
-            try:
-                response = llm.invoke(prompt)
-                answer = response.content.strip()
-                final_simple_answers.append(answer)
-            except Exception as e:
-                final_simple_answers.append(f"Error generating answer: {e}")
-        
-        return {"answers": final_simple_answers}
-
-    # --- Regular pipeline for other PDFs ---
     documents = get_documents_from_pdf_url(pdf_url)
     if not documents:
         return {"error": "Failed to retrieve or read the PDF document."}
@@ -111,11 +140,9 @@ If the information is not known from historical records, say 'Information not av
     if not text_chunks:
         return {"error": "Failed to chunk the document text."}
 
+    # Create embeddings for all text chunks
     chunk_texts = [chunk.page_content for chunk in text_chunks]
-    try:
-        chunk_embeddings = embeddings.embed_documents(chunk_texts)
-    except Exception as e:
-        return {"error": f"Error embedding chunks: {e}"}
+    chunk_embeddings = embeddings.embed_documents(chunk_texts)
 
     final_simple_answers = []
 
@@ -123,25 +150,22 @@ If the information is not known from historical records, say 'Information not av
     for i, question in enumerate(questions):
         print(f"\nProcessing question {i+1}/{len(questions)}: '{question}'")
         
-        try:
-            query_embedding = embeddings.embed_query(question)
-        except Exception as e:
-            final_simple_answers.append(f"Error embedding question: {e}")
-            continue
+        # Embed the current question
+        query_embedding = embeddings.embed_query(question)
 
-        similarities = [
-            np.dot(query_embedding, chunk_emb) / (np.linalg.norm(query_embedding) * np.linalg.norm(chunk_emb))
-            for chunk_emb in chunk_embeddings
-        ]
+        # --- Manual Similarity Search using NumPy ---
+        # Calculate cosine similarity between the question embedding and all chunk embeddings
+        similarities = [np.dot(query_embedding, chunk_emb) / (np.linalg.norm(query_embedding) * np.linalg.norm(chunk_emb)) for chunk_emb in chunk_embeddings]
         
+        # Get the indices of the top 5 most similar chunks
         top_k = 5
         top_indices = np.argsort(similarities)[-top_k:][::-1]
         
-        retrieved_docs = [text_chunks[idx] for idx in top_indices]
+        retrieved_docs = [text_chunks[i] for i in top_indices]
         
         context_with_sources = {}
         for doc in retrieved_docs:
-            page = doc.metadata.get("source_page", doc.metadata.get("page", "Unknown"))
+            page = doc.metadata.get("source_page", "Unknown")
             if page not in context_with_sources:
                 context_with_sources[page] = []
             context_with_sources[page].append(doc.page_content)
@@ -149,19 +173,20 @@ If the information is not known from historical records, say 'Information not av
         context_json_str = json.dumps(context_with_sources, indent=2)
 
         if retrieved_docs:
+            # Generate the detailed answer for logging purposes
             structured_answer = generate_structured_answer(context_json_str, question)
             print(json.dumps(structured_answer, indent=2))
+            
+            # Extract only the simple answer for the final response
             final_simple_answers.append(structured_answer.get("answer", "Error processing this question."))
         else:
+            # Handle cases where no context is found
             error_answer = "Could not find any relevant context for this question in the document."
             print(f"  -> {error_answer}")
             final_simple_answers.append(error_answer)
 
-    return {"answers": final_simple_answers}
-
-# --- Example usage (you can comment this out in production) ---
-if __name__ == "__main__":
-    test_pdf_url = "https://example.com/sample.pdf"
-    test_questions = ["What is the main topic?", "Who is the author?"]
-    results = process_document_and_questions(test_pdf_url, test_questions)
-    print("\nFINAL ANSWERS:", results)
+    # This is the final object that will be sent to the judge
+    final_response = {"answers": final_simple_answers}
+    print("\n--- FINAL API RESPONSE (as sent to judge) ---")
+    print(json.dumps(final_response, indent=2))
+    return final_response
